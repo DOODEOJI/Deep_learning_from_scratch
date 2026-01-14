@@ -32,6 +32,12 @@ class Exp(Function):
     def forward(self, x):
         return np.exp(x)
     
+def f(x):
+    A = Square()
+    B = Exp()
+    C = Square()
+    return C(B(A(x)))    
+    
 def numerical_diff(f, x, eps=1e-4): # 중앙차분(centered difference)을 이용한 수치미분(numerical differentiation)
     x0 = Variable(x.data-eps)
     x1 = Variable(x.data+eps)
@@ -40,8 +46,11 @@ def numerical_diff(f, x, eps=1e-4): # 중앙차분(centered difference)을 이�
 
     return (y1.data - y0.data) / (2*eps)
 
+
+
  
 if __name__ == "__main__":
+    '''
     x = Variable(np.array(10))
     f = Square()
     y = f(x)
@@ -63,4 +72,10 @@ if __name__ == "__main__":
     f = Square()
     x = Variable(np.array(2.))
     dy = numerical_diff(f, x)
+    print(dy)
+    '''
+
+    # 합성함수 수치미분
+    x = Variable(np.array(0.5))
+    dy = numerical_diff(f,x) # f 함수 선언하고 함수 객체로 전달 (인수 없어도 됨)
     print(dy)

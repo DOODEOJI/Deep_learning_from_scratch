@@ -1,6 +1,7 @@
 import numpy as np
 import weakref
 import contextlib
+import dezero
 
 class Config:
     enable_backprop = True
@@ -72,6 +73,12 @@ class Variable:
     def set_creator(self, func):
         self.creator = func
         self.generation = func.generation + 1
+
+    def reshape(self, *shape):
+        if len(shape) == 1 or isinstance(shape[0], (list, tuple)):
+            shape = shape[0]
+
+        return dezero.functions.reshape(self, shape)
 
     def backward(self, retain_grad = False, create_graph = False):
         if self.grad is None:

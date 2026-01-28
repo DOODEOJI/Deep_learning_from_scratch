@@ -3,18 +3,19 @@ import weakref
 import contextlib
 import dezero
 
-class Config:
-    enable_backprop = True
-
-def as_array(x):
+def as_array(x, array_module=np):
     if np.isscalar(x):
-        return np.array(x)
+        return array_module.array(x)
     return x
 
 def as_variable(obj):
     if isinstance(obj, Variable):
         return obj
     return Variable(obj)
+
+class Config:
+    enable_backprop = True
+    train = True
 
 @contextlib.contextmanager
 def using_config(name, value):
@@ -25,16 +26,24 @@ def using_config(name, value):
     finally:
         setattr(Config, name, old_value)
 
+def test_mode():
+    return using_config('train', False)
+
 def no_grad():
     return using_config('enable_backprop', False)
+
+try:
+    import cupy
+    array_types = (np.ndarray, cupy.ndarray)
+except ImportError:
+    array_types = (np.ndarray)
 
 class Variable:
     __array__priority__ = 200
     def __init__(self, data, name=None):
         if data is not None:
-            if not isinstance(data, np.ndarray):
-                data = np.array(data)
-                # raise TypeError('{} is not supported'.format(type(data)))
+            if not isinstance(data, array_types):
+                raise TypeError('{} is not supported'.format(type(data)))
         self.data = data
         self.name = name
         self.grad = None
@@ -89,11 +98,20 @@ class Variable:
     
     def sum(self, axis=None, keepdims=False):
         return dezero.functions.sum(self, axis, keepdims)
+    
+    def to_cpu(self):
+        if self.data is not None:
+            self.data = dezero.cuda.as_numpy(self.data)
+    
+    def to_gpu(self):
+        if self.data is not None:
+            self.data = dezero.cuda.as_cupy(self.data)
 
     def backward(self, retain_grad = False, create_graph = False):
         if self.grad is None:
+            xp = dezero.cuda.get_array_module(self.data)
             # self.grad = np.ones_like(self.data)
-            self.grad = Variable(np.ones_like(self.data)) # Variable 객체로 취급하여 계산 그래프가 생성되도록
+            self.grad = Variable(xp.ones_like(self.data)) # Variable 객체로 취급하여 계산 그래프가 생성되도록
 
         funcs = []
         seen_set = set()
@@ -175,12 +193,18 @@ class Add(Function):
     
 class Mul(Function):
     def forward(self, x0, x1):
+        self.x0_shape, self.x1_shape = x0.shape, x1.shape
         y = x0 * x1
         return y
-    
+
     def backward(self, gy):
-        x0, x1 = self.inputs # Variable 계산 형태로 두면 됨
-        return x1 * gy, x0 * gy
+        x0, x1 = self.inputs
+        gx0 = x1 * gy
+        gx1 = x0 * gy
+        if self.x0_shape != self.x1_shape:
+            gx0 = dezero.functions.sum_to(gx0, self.x0_shape)
+            gx1 = dezero.functions.sum_to(gx1, self.x1_shape)
+        return gx0, gx1
     
 class Neg(Function):
     def forward(self, x):
@@ -191,21 +215,30 @@ class Neg(Function):
     
 class Sub(Function):
     def forward(self, x0, x1):
+        self.x0_shape, self.x1_shape = x0.shape, x1.shape
         y = x0 - x1
         return y
-    
+
     def backward(self, gy):
-        return gy, -gy
+        gx0, gx1 = gy, -gy
+        if self.x0_shape != self.x1_shape:
+            gx0 = dezero.functions.sum_to(gx0, self.x0_shape)
+            gx1 = dezero.functions.sum_to(gx1, self.x1_shape)
+        return gx0, gx1
     
 class Div(Function):
     def forward(self, x0, x1):
+        self.x0_shape, self.x1_shape = x0.shape, x1.shape
         y = x0 / x1
         return y
-    
+
     def backward(self, gy):
         x0, x1 = self.inputs
-        gx0 = gy/x1
+        gx0 = gy / x1
         gx1 = gy * (-x0 / x1 ** 2)
+        if self.x0_shape != self.x1_shape:
+            gx0 = dezero.functions.sum_to(gx0, self.x0_shape)
+            gx1 = dezero.functions.sum_to(gx1, self.x1_shape)
         return gx0, gx1
         
 class Pow(Function):
@@ -223,35 +256,37 @@ class Pow(Function):
         return gx
 
 def add(x0, x1):
-    x1 = as_array(x1)
+    x1 = as_array(x1, dezero.cuda.get_array_module(x0.data))
     return Add()(x0, x1)
 
 def mul(x0, x1):
+    x1 = as_array(x1, dezero.cuda.get_array_module(x0.data))
     return Mul()(x0, x1)
 
 def neg(x):
     return Neg()(x)
 
 def sub(x0, x1):
-    x1 = as_array(x1)
+    x1 = as_array(x1, dezero.cuda.get_array_module(x0.data))
     return Sub()(x0, x1)
 
 def rsub(x0, x1):
-    x1 = as_array(x1)
+    x1 = as_array(x1, dezero.cuda.get_array_module(x0.data))
     return Sub()(x1, x0) # rsub은 인수의 순서가 바뀌어 전달되므로 순서를 바꿔서 호출
 
 def div(x0, x1):
-    x1 = as_array(x1)
+    x1 = as_array(x1, dezero.cuda.get_array_module(x0.data))
     return Div()(x0, x1)
 
 def rdiv(x0, x1):
-    x1 = as_array(x1)
+    x1 = as_array(x1, dezero.cuda.get_array_module(x0.data))
     return Div()(x1, x0)
 
 def pow(x, c):
     return Pow(c)(x) # Pow 클래스 초기화 시 c 제공
 
 def setup_variable():
+    import dezero.functions as F
     Variable.__add__ = add
     Variable.__radd__ = add
     Variable.__mul__ = mul
@@ -262,7 +297,4 @@ def setup_variable():
     Variable.__truediv__ = div
     Variable.__rtruediv__ = rdiv
     Variable.__pow__ = pow
-
-
-
-
+    Variable.__getitem__ = F.get_item

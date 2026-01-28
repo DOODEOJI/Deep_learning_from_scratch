@@ -1,5 +1,32 @@
 import os
 import subprocess
+import urllib.request
+
+cache_dir = os.path.join(os.path.expanduser('~'), '.dezero')
+
+
+def get_file(url, file_name=None):
+    if file_name is None:
+        file_name = url[url.rfind('/') + 1:]
+
+    file_path = os.path.join(cache_dir, file_name)
+
+    if not os.path.exists(cache_dir):
+        os.mkdir(cache_dir)
+
+    if os.path.exists(file_path):
+        return file_path
+
+    print("Downloading: " + file_name)
+    try:
+        urllib.request.urlretrieve(url, file_path)
+    except (Exception, KeyboardInterrupt) as e:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise
+    print(" Done")
+
+    return file_path
 
 def _dot_var(v, verbose = False):
     dot_var = '{} [label="{}", color=orange, style=filled]\n'
@@ -113,3 +140,15 @@ def sum_to(x, shape):
     if lead > 0:
         y = y.squeeze(lead_axis)
     return y
+
+def pair(x):
+    if isinstance(x, int):
+        return (x, x)
+    elif isinstance(x, tuple):
+        assert len(x) == 2
+        return x
+    else:
+        raise ValueError
+
+def get_conv_outsize(input_size, kernel_size, stride, pad):
+    return (input_size + pad * 2 -kernel_size) // stride + 1

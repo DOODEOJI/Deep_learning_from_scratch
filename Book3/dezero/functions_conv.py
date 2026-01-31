@@ -29,7 +29,7 @@ def conv2d_simple(x, W, b=None, stride=1, pad=0):
 def pooling_simple(x, kernel_size, stride=1, pad=0):
     x = as_variable(x)
 
-    N, C, H, W = x.shape
+    N, C, H, W = x.shape 
     KH, KW = pair(kernel_size)
     PH, PW = pair(pad)
     SH, SW = pair(stride)
